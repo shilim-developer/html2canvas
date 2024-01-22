@@ -2,6 +2,8 @@ interface CSSStyleDeclaration {
     textDecorationColor: string;
     textDecorationLine: string;
     overflowWrap: string;
+    maskClip: string;
+    maskOrigin: string;
 }
 
 interface DocumentType extends Node, ChildNode {

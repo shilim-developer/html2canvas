@@ -86,7 +86,6 @@ const renderElement = async (element: HTMLElement, opts: Partial<Options>): Prom
             windowBounds.height
         } scrolled to ${-windowBounds.left},${-windowBounds.top}`
     );
-
     const documentCloner = new DocumentCloner(context, element, cloneOptions);
     const clonedElement = documentCloner.clonedReferenceElement;
     if (!clonedElement) {

@@ -1,0 +1,162 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html>
+    <head>
+        <title>mask-image test</title>
+        <style type="text/css">
+            /* last modified: 1 Dec 98 */
+
+            html {
+                font: 10px/1 Verdana, sans-serif;
+                background-color: blue;
+                color: white;
+            }
+
+            body {
+                margin: 1.5em;
+                border: 0.5em solid black;
+                padding: 0;
+                width: 48em;
+                background-color: white;
+            }
+            .target {
+                width: 200px;
+                height: 200px;
+            }
+        </style>
+    </head>
+    <body>
+        <div
+            id="canvas"
+            class="design-canvas"
+            style="
+                width: 1890px;
+                height: 1417px;
+                transform: scale(0.6);
+                transform-origin: left top;
+                background-size: cover;
+                background-position: 0px 0px;
+                opacity: 1;
+                background: white;
+            "
+        >
+            <div style="position: absolute; left: 40px; top: 211px; width: 827px; height: 636px; opacity: 1">
+                <div style="border-radius: 0px">
+                    <div
+                        class="target"
+                        style="
+                            transform-origin: center center;
+                            background-repeat: no-repeat;
+                            background-image: radial-gradient(circle at top left, #ff0000, #ffff00);
+                            background-color: black;
+                            background-size: 825px 783px;
+                            background-position: 11px -98px;
+                            mask-image: url('./img/mask.png');
+                            mask-size: 100% 100%;
+                            mask-repeat: no-repeat;
+                            mask-position: center center;
+                            transform: scale(1);
+                        "
+                    ></div>
+                </div>
+                <div style="border-radius: 0px">
+                    <div
+                        class="target"
+                        style="
+                            transform-origin: center center;
+                            background-repeat: no-repeat;
+                            background-image: url('./img/back.png');
+                            background-color: black;
+                            background-size: 825px 783px;
+                            background-position: 11px -98px;
+                            mask-image: url('./img/mask.png');
+                            mask-size: 100% 100%;
+                            mask-repeat: no-repeat;
+                            mask-position: center center;
+                            transform: scale(1);
+                        "
+                    ></div>
+                </div>
+                <div style="border-radius: 0px">
+                    <img
+                        class="target"
+                        src="./img/back.png"
+                        style="
+                            mask-image: url('./img/mask.png');
+                            mask-size: 100% 100%;
+                            mask-repeat: no-repeat;
+                            mask-position: center center;
+                            transform: scale(1);
+                        "
+                    ></img>
+                </div>
+            </div>
+            <div
+                style="
+                    position: absolute;
+                    left: 1143px;
+                    top: 423px;
+                    width: 350px;
+                    min-width: 72px;
+                    min-height: 86.4px;
+                    height: 86px;
+                    line-height: 86.4px;
+                    letter-spacing: 7px;
+                    font-size: 72px;
+                    color: rgb(0, 0, 0);
+                    text-align: center;
+                    opacity: 1;
+                    writing-mode: horizontal-tb;
+                    font-family: ourceHanSansCN-Normal;
+                "
+            >
+                <div style="font-family: ourceHanSansCN-Normal; color: transparent">我是标题</div>
+                <div style="font-family: ourceHanSansCN-Normal; color: rgb(0, 0, 0)">我是标题</div>
+                <div style="font-family: ourceHanSansCN-Normal">我是标题</div>
+            </div>
+            <div
+                style="
+                    position: absolute;
+                    left: 1132px;
+                    top: 634px;
+                    width: 351px;
+                    min-width: 72px;
+                    min-height: 86.4px;
+                    height: 86px;
+                    line-height: 86.4px;
+                    letter-spacing: 7px;
+                    font-size: 72px;
+                    color: rgb(0, 0, 0);
+                    text-align: center;
+                    opacity: 1;
+                    writing-mode: horizontal-tb;
+                    font-family: ourceHanSansCN-Normal;
+                "
+            >
+                <div
+                    style="font-family: ourceHanSansCN-Normal; color: transparent"
+                >
+                    我是内容
+                </div>
+                <div
+                    style="font-family: ourceHanSansCN-Normal; color: rgb(0, 0, 0)"
+                >
+                    我是内容
+                </div>
+                <div
+                    style="font-family: ourceHanSansCN-Normal"
+                >
+                    我是内容
+                </div>
+            </div>
+        </div>
+        <script type="text/javascript" src="../dist/html2canvas.js"></script>
+        <script type="text/javascript">
+            html2canvas(document.getElementById('canvas'), {
+                useCORS: true,
+                scale: 1
+            }).then(function (canvas) {
+                document.body.appendChild(canvas);
+            });
+        </script>
+    </body>
+</html>

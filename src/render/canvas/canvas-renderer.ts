@@ -16,7 +16,11 @@ import {
     parsePathForBorderDoubleOuter,
     parsePathForBorderStroke
 } from '../border';
-import {calculateBackgroundRendering, getBackgroundValueForIndex} from '../background';
+import {
+    calculateBackgroundRendering,
+    calculateTempBackgroundRendering,
+    getBackgroundValueForIndex
+} from '../background';
 import {isDimensionToken} from '../../css/syntax/parser';
 import {segmentGraphemes, TextBounds} from '../../css/layout/text';
 import {ImageElementContainer} from '../../dom/replaced-elements/image-element-container';
@@ -44,6 +48,7 @@ import {PAINT_ORDER_LAYER} from '../../css/property-descriptors/paint-order';
 import {Renderer} from '../renderer';
 import {Context} from '../../core/context';
 import {DIRECTION} from '../../css/property-descriptors/direction';
+import {calculateMaskRendering} from '../mask';
 
 export type RenderConfigurations = RenderOptions & {
     backgroundColor: Color | null;
@@ -65,9 +70,11 @@ export class CanvasRenderer extends Renderer {
     ctx: CanvasRenderingContext2D;
     private readonly _activeEffects: IElementEffect[] = [];
     private readonly fontMetrics: FontMetrics;
+    readonly options: RenderConfigurations;
 
     constructor(context: Context, options: RenderConfigurations) {
         super(context, options);
+        this.options = options;
         this.canvas = options.canvas ? options.canvas : document.createElement('canvas');
         this.ctx = this.canvas.getContext('2d') as CanvasRenderingContext2D;
         if (!options.canvas) {
@@ -80,6 +87,8 @@ export class CanvasRenderer extends Renderer {
         this.ctx.scale(this.options.scale, this.options.scale);
         this.ctx.translate(-options.x, -options.y);
         this.ctx.textBaseline = 'bottom';
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
         this._activeEffects = [];
         this.context.logger.debug(
             `Canvas renderer initialized (${options.width}x${options.height}) with scale ${options.scale}`
@@ -532,23 +541,25 @@ export class CanvasRenderer extends Renderer {
         this.ctx.closePath();
     }
 
-    path(paths: Path[]): void {
-        this.ctx.beginPath();
-        this.formatPath(paths);
-        this.ctx.closePath();
+    path(paths: Path[], tempCtx?: CanvasRenderingContext2D): void {
+        const curCtx = tempCtx || this.ctx;
+        curCtx.beginPath();
+        this.formatPath(paths, curCtx);
+        curCtx.closePath();
     }
 
-    formatPath(paths: Path[]): void {
+    formatPath(paths: Path[], tempCtx?: CanvasRenderingContext2D): void {
+        const curCtx = tempCtx || this.ctx;
         paths.forEach((point, index) => {
             const start: Vector = isBezierCurve(point) ? point.start : point;
             if (index === 0) {
-                this.ctx.moveTo(start.x, start.y);
+                curCtx.moveTo(start.x, start.y);
             } else {
-                this.ctx.lineTo(start.x, start.y);
+                curCtx.lineTo(start.x, start.y);
             }
 
             if (isBezierCurve(point)) {
-                this.ctx.bezierCurveTo(
+                curCtx.bezierCurveTo(
                     point.startControl.x,
                     point.startControl.y,
                     point.endControl.x,
@@ -560,12 +571,19 @@ export class CanvasRenderer extends Renderer {
         });
     }
 
-    renderRepeat(path: Path[], pattern: CanvasPattern | CanvasGradient, offsetX: number, offsetY: number): void {
-        this.path(path);
-        this.ctx.fillStyle = pattern;
-        this.ctx.translate(offsetX, offsetY);
-        this.ctx.fill();
-        this.ctx.translate(-offsetX, -offsetY);
+    renderRepeat(
+        path: Path[],
+        pattern: CanvasPattern | CanvasGradient,
+        offsetX: number,
+        offsetY: number,
+        tempCtx?: CanvasRenderingContext2D
+    ): void {
+        const curCtx = tempCtx || this.ctx;
+        this.path(path, curCtx);
+        curCtx.fillStyle = pattern;
+        curCtx.translate(offsetX, offsetY);
+        curCtx.fill();
+        curCtx.translate(-offsetX, -offsetY);
     }
 
     resizeImage(image: HTMLImageElement, width: number, height: number): HTMLCanvasElement | HTMLImageElement {
@@ -582,7 +600,61 @@ export class CanvasRenderer extends Renderer {
         return canvas;
     }
 
-    async renderBackgroundImage(container: ElementContainer): Promise<void> {
+    crCalculateBlend(a1: number, a2: number, c1: number, c2: number): number {
+        return (c1 * a1 * (1 - a2) + c2 * a2) / (a1 + a2 - a1 * a2);
+    }
+
+    // cor2叠加在cor1上
+    crColorBlend(
+        cor1: [number, number, number, number],
+        cor2: [number, number, number, number]
+    ): [number, number, number, number] {
+        const fAlp1 = cor1[3] / 255;
+        const fAlp2 = cor2[3] / 255;
+        const fAlpBlend = fAlp1 + fAlp2 - fAlp1 * fAlp2;
+
+        const fRed1 = cor1[0] / 255;
+        const fRed2 = cor2[0] / 255;
+        const fRedBlend = this.crCalculateBlend(fAlp1, fAlp2, fRed1, fRed2);
+
+        const fGreen1 = cor1[1] / 255;
+        const fGreen2 = cor2[1] / 255;
+        const fGreenBlend = this.crCalculateBlend(fAlp1, fAlp2, fGreen1, fGreen2);
+
+        const fBlue1 = cor1[2] / 255;
+        const fBlue2 = cor2[2] / 255;
+        const fBlueBlend = this.crCalculateBlend(fAlp1, fAlp2, fBlue1, fBlue2);
+        return [fRedBlend * 255, fGreenBlend * 255, fBlueBlend * 255, fAlpBlend * 255];
+    }
+
+    getDataImage(position: Vector, sw: number, sh: number): ImageData {
+        return this.ctx.getImageData(
+            (position.x - this.options.x) * this.options.scale,
+            (position.y - this.options.y) * this.options.scale,
+            sw * this.options.scale,
+            sh * this.options.scale
+        );
+    }
+
+    putImageData(position: Vector, imageData: ImageData): void {
+        this.ctx.putImageData(imageData, position.x, position.y);
+    }
+
+    clearRect(position: Vector, sw: number, sh: number): void {
+        this.ctx.clearRect(position.x, position.y, sw, sh);
+        // this.ctx.beginPath();
+    }
+
+    renderTempBackgroundColor(tempCanvas: HTMLCanvasElement, backgroundColor: number): void {
+        if (!isTransparent(backgroundColor)) {
+            const tempCanvasContext = tempCanvas.getContext('2d') as CanvasRenderingContext2D;
+            tempCanvasContext.fillStyle = asString(backgroundColor);
+            tempCanvasContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        }
+    }
+
+    async renderTempBackgroundImage(tempCanvas: HTMLCanvasElement, container: ElementContainer): Promise<void> {
+        const tempCanvasContext = tempCanvas.getContext('2d') as CanvasRenderingContext2D;
         let index = container.styles.backgroundImage.length - 1;
         for (const backgroundImage of container.styles.backgroundImage.slice(0).reverse()) {
             if (backgroundImage.type === CSSImageType.URL) {
@@ -593,7 +665,181 @@ export class CanvasRenderer extends Renderer {
                 } catch (e) {
                     this.context.logger.error(`Error loading background-image ${url}`);
                 }
+                if (image) {
+                    const [path, x, y, width, height] = calculateTempBackgroundRendering(container, index, [
+                        image.width,
+                        image.height,
+                        image.width / image.height
+                    ]);
+                    const pattern = this.ctx.createPattern(
+                        this.resizeImage(image, width, height),
+                        'repeat'
+                    ) as CanvasPattern;
+                    tempCanvasContext.beginPath();
+                    path.forEach((point, index) => {
+                        const start: Vector = isBezierCurve(point) ? point.start : point;
+                        if (index === 0) {
+                            tempCanvasContext.moveTo(start.x, start.y);
+                        } else {
+                            tempCanvasContext.lineTo(start.x, start.y);
+                        }
 
+                        if (isBezierCurve(point)) {
+                            tempCanvasContext.bezierCurveTo(
+                                point.startControl.x,
+                                point.startControl.y,
+                                point.endControl.x,
+                                point.endControl.y,
+                                point.end.x,
+                                point.end.y
+                            );
+                            debugger;
+                        }
+                    });
+                    tempCanvasContext.closePath();
+                    tempCanvasContext.fillStyle = pattern;
+                    tempCanvasContext.translate(x, y);
+                    tempCanvasContext.fill();
+                    tempCanvasContext.translate(x, y);
+                }
+            } else if (isLinearGradient(backgroundImage)) {
+                const [path, x, y, width, height] = calculateTempBackgroundRendering(container, index, [
+                    null,
+                    null,
+                    null
+                ]);
+                const [lineLength, x0, x1, y0, y1] = calculateGradientDirection(backgroundImage.angle, width, height);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+                const gradient = ctx.createLinearGradient(x0, y0, x1, y1);
+
+                processColorStops(backgroundImage.stops, lineLength).forEach((colorStop) =>
+                    gradient.addColorStop(colorStop.stop, asString(colorStop.color))
+                );
+
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, width, height);
+                if (width > 0 && height > 0) {
+                    const pattern = ctx.createPattern(canvas, 'repeat') as CanvasPattern;
+                    this.renderRepeat(path, pattern, x, y, tempCanvasContext);
+                }
+            } else if (isRadialGradient(backgroundImage)) {
+                const [path, left, top, width, height] = calculateTempBackgroundRendering(container, index, [
+                    null,
+                    null,
+                    null
+                ]);
+                const position = backgroundImage.position.length === 0 ? [FIFTY_PERCENT] : backgroundImage.position;
+                const x = getAbsoluteValue(position[0], width);
+                const y = getAbsoluteValue(position[position.length - 1], height);
+
+                const [rx, ry] = calculateRadius(backgroundImage, x, y, width, height);
+                if (rx > 0 && ry > 0) {
+                    const radialGradient = this.ctx.createRadialGradient(left + x, top + y, 0, left + x, top + y, rx);
+
+                    processColorStops(backgroundImage.stops, rx * 2).forEach((colorStop) =>
+                        radialGradient.addColorStop(colorStop.stop, asString(colorStop.color))
+                    );
+
+                    this.path(path, tempCanvasContext);
+                    tempCanvasContext.fillStyle = radialGradient;
+                    if (rx !== ry) {
+                        // transforms for elliptical radial gradient
+                        const midX = container.bounds.left + 0.5 * container.bounds.width;
+                        const midY = container.bounds.top + 0.5 * container.bounds.height;
+                        const f = ry / rx;
+                        const invF = 1 / f;
+
+                        tempCanvasContext.save();
+                        tempCanvasContext.translate(midX, midY);
+                        tempCanvasContext.transform(1, 0, 0, f, 0, 0);
+                        tempCanvasContext.translate(-midX, -midY);
+
+                        tempCanvasContext.fillRect(left, invF * (top - midY) + midY, width, height * invF);
+                        tempCanvasContext.restore();
+                    } else {
+                        tempCanvasContext.fill();
+                    }
+                }
+            }
+            index--;
+        }
+    }
+
+    async renderTempBackgroundMask(
+        tempCanvas: HTMLCanvasElement,
+        container: ElementContainer,
+        backgroundWidth: number,
+        backGroundHeight: number
+    ): Promise<void> {
+        if (container.styles.maskImage.length === 0) return;
+        const tempCanvasContext = tempCanvas.getContext('2d') as CanvasRenderingContext2D;
+        // 获背景图片数据
+        const newImage = tempCanvasContext.getImageData(0, 0, backgroundWidth, backGroundHeight);
+        const newImageData = newImage.data;
+        // 清空图片，绘制遮罩
+        tempCanvas.width = backgroundWidth;
+        let index = container.styles.maskImage.length - 1;
+        for (const maskImage of container.styles.maskImage.slice(0).reverse()) {
+            if (maskImage.type === CSSImageType.URL) {
+                let image;
+                const url = (maskImage as CSSURLImage).url;
+                try {
+                    image = await this.context.cache.match(url);
+                } catch (e) {
+                    this.context.logger.error(`Error loading mask-image ${url}`);
+                }
+                if (image) {
+                    const [path, x, y, width, height] = calculateMaskRendering(container, index, [
+                        image.width,
+                        image.height,
+                        image.width / image.height
+                    ]);
+                    const pattern = tempCanvasContext.createPattern(
+                        this.resizeImage(image, width, height),
+                        'repeat'
+                    ) as CanvasPattern;
+                    this.renderRepeat(path, pattern, x, y, tempCanvasContext);
+                }
+            }
+            index--;
+        }
+        // 合并遮罩
+        const maskDataImage = tempCanvasContext.getImageData(0, 0, backgroundWidth, backGroundHeight);
+        const maskImageData = maskDataImage.data;
+        if (container.styles.maskImage.length > 0) {
+            for (let i = 0; i < newImageData.length; i += 4) {
+                newImageData[i + 3] = maskImageData[i + 3];
+            }
+        }
+        tempCanvas.width = backgroundWidth;
+        tempCanvasContext.putImageData(newImage, 0, 0);
+    }
+
+    async renderBackgroundImage(container: ElementContainer): Promise<void> {
+        // 绘制背景之前，保存已经绘制的
+        // 获取背景的大小
+        // const startPoint = backgroundPaintingArea[0] as Vector;
+        // const backgroundWidth = (backgroundPaintingArea[1] as Vector).x - (backgroundPaintingArea[0] as Vector).x;
+        // const backGroundHeight = (backgroundPaintingArea[2] as Vector).y - (backgroundPaintingArea[0] as Vector).y;
+
+        // // 保存已经绘制的图片数据
+        // const backgroundImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+        // const backgroundImageData = backgroundImage.data;
+
+        let index = container.styles.backgroundImage.length - 1;
+        for (const backgroundImage of container.styles.backgroundImage.slice(0).reverse()) {
+            if (backgroundImage.type === CSSImageType.URL) {
+                let image;
+                const url = (backgroundImage as CSSURLImage).url;
+                try {
+                    image = await this.context.cache.match(url);
+                } catch (e) {
+                    this.context.logger.error(`Error loading background-image ${url}`);
+                }
                 if (image) {
                     const [path, x, y, width, height] = calculateBackgroundRendering(container, index, [
                         image.width,
@@ -605,6 +851,76 @@ export class CanvasRenderer extends Renderer {
                         'repeat'
                     ) as CanvasPattern;
                     this.renderRepeat(path, pattern, x, y);
+                    // 绘制遮罩
+                    // if (container.styles.maskImage.length > 0) {
+                    //     // 获取背景的大小
+                    //     const startPoint = backgroundPaintingArea[0] as Vector;
+                    //     const backgroundWidth =
+                    //         (backgroundPaintingArea[1] as Vector).x - (backgroundPaintingArea[0] as Vector).x;
+                    //     const backGroundHeight =
+                    //         (backgroundPaintingArea[2] as Vector).y - (backgroundPaintingArea[0] as Vector).y;
+
+                    //     // 保存已经绘制的图片数据
+                    //     const backgroundImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+                    //     const backgroundImageData = backgroundImage.data;
+                    //     // 清空绘制区域
+                    //     this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+                    //     // 绘制需要绘制的新图片
+                    //     this.renderRepeat(path, pattern, x, y);
+                    //     const newImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+                    //     const newImageData = newImage.data;
+                    //     // 清空绘制区域
+                    //     this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+                    //     // 绘制遮罩
+                    //     let maskImage;
+                    //     const url = (container.styles.maskImage[0] as CSSURLImage).url;
+                    //     try {
+                    //         maskImage = await this.context.cache.match(url);
+                    //     } catch (e) {
+                    //         this.context.logger.error(`Error loading mask-image ${url}`);
+                    //     }
+                    //     const [maskPath, maskX, maskY, maskWidth, maskHeight] = calculateMaskRendering(
+                    //         container,
+                    //         index,
+                    //         [maskImage.width, maskImage.height, maskImage.width / maskImage.height]
+                    //     );
+                    //     const maskPattern = this.ctx.createPattern(
+                    //         this.resizeImage(maskImage, maskWidth, maskHeight),
+                    //         'repeat'
+                    //     ) as CanvasPattern;
+                    //     // this.renderRepeat(maskPath, maskPattern, maskX, maskY);
+                    //     const maskDataImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+                    //     const maskImageData = maskDataImage.data;
+                    //     if (backgroundImageData && newImageData && maskImageData) {
+                    //         for (let i = 0; i < newImageData.length; i += 4) {
+                    //             newImageData[i + 3] = maskImageData[i + 3];
+                    //             if (newImageData[i + 3] === 0) {
+                    //                 newImageData[i] = backgroundImageData[i];
+                    //                 newImageData[i + 1] = backgroundImageData[i + 1];
+                    //                 newImageData[i + 2] = backgroundImageData[i + 2];
+                    //                 newImageData[i + 3] = backgroundImageData[i + 3];
+                    //             } else if (newImageData[i + 3] !== 255) {
+                    //                 const newData = this.crColorBlend(
+                    //                     [
+                    //                         backgroundImageData[i],
+                    //                         backgroundImageData[i + 1],
+                    //                         backgroundImageData[i + 2],
+                    //                         backgroundImageData[i + 3]
+                    //                     ],
+                    //                     [newImageData[i], newImageData[i + 1], newImageData[i + 2], newImageData[i + 3]]
+                    //                 );
+                    //                 newImageData[i] = newData[0];
+                    //                 newImageData[i + 1] = newData[1];
+                    //                 newImageData[i + 2] = newData[2];
+                    //                 newImageData[i + 3] = newData[3];
+                    //             }
+                    //         }
+                    //     }
+                    //     // this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+                    //     // this.putImageData(startPoint, newImage);
+                    // } else {
+                    //     this.renderRepeat(path, pattern, x, y);
+                    // }
                 }
             } else if (isLinearGradient(backgroundImage)) {
                 const [path, x, y, width, height] = calculateBackgroundRendering(container, index, [null, null, null]);
@@ -669,6 +985,74 @@ export class CanvasRenderer extends Renderer {
         }
     }
 
+    async renderBackgroundMask(
+        container: ElementContainer,
+        backgroundImageData: Uint8ClampedArray,
+        startPoint: Vector,
+        backgroundWidth: number,
+        backGroundHeight: number
+    ): Promise<void> {
+        if (container.styles.maskImage.length === 0) return;
+        // 先获取已经绘制的背景图
+        const newImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+        const newImageData = newImage.data;
+        // 清空图片，绘制遮罩
+        this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+        let index = container.styles.maskImage.length - 1;
+        for (const maskImage of container.styles.maskImage.slice(0).reverse()) {
+            if (maskImage.type === CSSImageType.URL) {
+                let image;
+                const url = (maskImage as CSSURLImage).url;
+                try {
+                    image = await this.context.cache.match(url);
+                } catch (e) {
+                    this.context.logger.error(`Error loading mask-image ${url}`);
+                }
+                if (image) {
+                    const [path, x, y, width, height] = calculateMaskRendering(container, index, [
+                        image.width,
+                        image.height,
+                        image.width / image.height
+                    ]);
+                    const pattern = this.ctx.createPattern(
+                        this.resizeImage(image, width, height),
+                        'repeat'
+                    ) as CanvasPattern;
+                    this.renderRepeat(path, pattern, x, y);
+                }
+            }
+            index--;
+        }
+        const maskDataImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+        const maskImageData = maskDataImage.data;
+        if (container.styles.maskImage.length > 0) {
+            for (let i = 0; i < newImageData.length; i += 4) {
+                newImageData[i + 3] = maskImageData[i + 3];
+                if (newImageData[i + 3] === 0) {
+                    newImageData[i] = backgroundImageData[i];
+                    newImageData[i + 1] = backgroundImageData[i + 1];
+                    newImageData[i + 2] = backgroundImageData[i + 2];
+                    newImageData[i + 3] = backgroundImageData[i + 3];
+                } else if (newImageData[i + 3] !== 255) {
+                    const newData = this.crColorBlend(
+                        [
+                            backgroundImageData[i],
+                            backgroundImageData[i + 1],
+                            backgroundImageData[i + 2],
+                            backgroundImageData[i + 3]
+                        ],
+                        [newImageData[i], newImageData[i + 1], newImageData[i + 2], newImageData[i + 3]]
+                    );
+                    newImageData[i] = newData[0];
+                    newImageData[i + 1] = newData[1];
+                    newImageData[i + 2] = newData[2];
+                    newImageData[i + 3] = newData[3];
+                }
+            }
+        }
+        // this.putImageData(startPoint, newImage);
+    }
+
     async renderSolidBorder(color: Color, side: number, curvePoints: BoundCurves): Promise<void> {
         this.path(parsePathForBorder(curvePoints, side));
         this.ctx.fillStyle = asString(color);
@@ -711,13 +1095,76 @@ export class CanvasRenderer extends Renderer {
             this.ctx.save();
             this.path(backgroundPaintingArea);
             this.ctx.clip();
-
+            const startPoint = backgroundPaintingArea[0] as Vector;
+            const backgroundWidth = (backgroundPaintingArea[1] as Vector).x - (backgroundPaintingArea[0] as Vector).x;
+            const backGroundHeight = (backgroundPaintingArea[2] as Vector).y - (backgroundPaintingArea[0] as Vector).y;
+            // const backgroundImage = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+            // const backgroundImageData = backgroundImage.data;
+            // this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+            const containerBounds = paint.container.bounds;
+            const tempCanvas = this.canvas.ownerDocument.createElement('canvas');
+            tempCanvas.width = containerBounds.width;
+            tempCanvas.height = containerBounds.height;
             if (!isTransparent(styles.backgroundColor)) {
-                this.ctx.fillStyle = asString(styles.backgroundColor);
-                this.ctx.fill();
+                this.renderTempBackgroundColor(tempCanvas, styles.backgroundColor);
+                // this.ctx.strokeStyle = 'blue';
+                // this.ctx.stroke();
+                // const imgData = this.getDataImage(startPoint, backgroundWidth, backGroundHeight);
+                // for (let i = 0; i < imgData.data.length; i += 4) {
+                //     imgData.data[i + 0] = 255;
+                //     imgData.data[i + 1] = 0;
+                //     imgData.data[i + 2] = 0;
+                //     imgData.data[i + 3] = 255;
+                // }
+                // this.ctx.putImageData(
+                //     imgData,
+                //     startPoint.x,
+                //     startPoint.y
+                //     // startPoint.x,
+                //     // startPoint.y,
+                //     // backgroundWidth,
+                //     // backGroundHeight
+                // );
+                // this.putImageData(startPoint, imgData);
+                // this.ctx.fillStyle = asString(styles.backgroundColor);
+                // this.ctx.fill();
+                // this.ctx.beginPath();
+                // this.ctx.fillStyle = 'red';
+                // this.ctx.fillRect(startPoint.x, startPoint.y, backgroundWidth, backGroundHeight);
+                // this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+                // this.ctx.fillStyle = 'rgba(255, 255, 23, 1)';
+                // this.ctx.fill();
+                // 创建临时canvas
             }
+            // tempCanvasContext.fillStyle = 'blue';
+            // tempCanvasContext.fillRect(0, 0, backgroundWidth, backGroundHeight);
+            await this.renderTempBackgroundImage(tempCanvas, paint.container);
+            await this.renderTempBackgroundMask(
+                tempCanvas,
+                paint.container,
+                containerBounds.width,
+                containerBounds.height
+            );
+            this.ctx.drawImage(
+                tempCanvas,
+                containerBounds.left,
+                containerBounds.top,
+                containerBounds.width,
+                containerBounds.height
+            );
 
-            await this.renderBackgroundImage(paint.container);
+            // await this.renderBackgroundImage(paint.container);
+            //清空图片，绘制遮罩
+            // this.clearRect(startPoint, backgroundWidth, backGroundHeight);
+            // this.ctx.fillStyle = 'rgba(0, 0, 0)';
+
+            // await this.renderBackgroundMask(
+            //     paint.container,
+            //     backgroundImageData,
+            //     startPoint,
+            //     backgroundWidth,
+            //     backGroundHeight
+            // );
 
             this.ctx.restore();
 
@@ -903,7 +1350,7 @@ export class CanvasRenderer extends Renderer {
         }
 
         const stack = parseStackingContexts(element);
-
+        // debugger;
         await this.renderStack(stack);
         this.applyEffects([]);
         return this.canvas;

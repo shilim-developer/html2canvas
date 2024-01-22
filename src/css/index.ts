@@ -6,6 +6,12 @@ import {backgroundOrigin} from './property-descriptors/background-origin';
 import {backgroundPosition} from './property-descriptors/background-position';
 import {backgroundRepeat} from './property-descriptors/background-repeat';
 import {backgroundSize} from './property-descriptors/background-size';
+import {maskImage} from './property-descriptors/mask-image';
+import {maskClip} from './property-descriptors/mask-clip';
+import {maskOrigin} from './property-descriptors/mask-origin';
+import {maskPosition} from './property-descriptors/mask-position';
+import {maskRepeat} from './property-descriptors/mask-repeat';
+import {maskSize} from './property-descriptors/mask-size';
 import {
     borderBottomColor,
     borderLeftColor,
@@ -90,6 +96,14 @@ export class CSSParsedDeclaration {
     backgroundPosition: ReturnType<typeof backgroundPosition.parse>;
     backgroundRepeat: ReturnType<typeof backgroundRepeat.parse>;
     backgroundSize: ReturnType<typeof backgroundSize.parse>;
+
+    maskClip: ReturnType<typeof maskClip.parse>;
+    maskImage: ReturnType<typeof maskImage.parse>;
+    maskOrigin: ReturnType<typeof maskOrigin.parse>;
+    maskPosition: ReturnType<typeof maskPosition.parse>;
+    maskRepeat: ReturnType<typeof maskRepeat.parse>;
+    maskSize: ReturnType<typeof maskSize.parse>;
+
     borderTopColor: Color;
     borderRightColor: Color;
     borderBottomColor: Color;
@@ -158,6 +172,12 @@ export class CSSParsedDeclaration {
         this.backgroundPosition = parse(context, backgroundPosition, declaration.backgroundPosition);
         this.backgroundRepeat = parse(context, backgroundRepeat, declaration.backgroundRepeat);
         this.backgroundSize = parse(context, backgroundSize, declaration.backgroundSize);
+        this.maskImage = parse(context, maskImage, declaration.maskImage);
+        this.maskClip = parse(context, maskClip, declaration.maskClip);
+        this.maskOrigin = parse(context, maskOrigin, declaration.maskOrigin);
+        this.maskPosition = parse(context, maskPosition, declaration.maskPosition);
+        this.maskRepeat = parse(context, maskRepeat, declaration.maskRepeat);
+        this.maskSize = parse(context, maskSize, declaration.maskSize);
         this.borderTopColor = parse(context, borderTopColor, declaration.borderTopColor);
         this.borderRightColor = parse(context, borderRightColor, declaration.borderRightColor);
         this.borderBottomColor = parse(context, borderBottomColor, declaration.borderBottomColor);

@@ -9,6 +9,7 @@ import {CSSValue, isIdentToken} from '../css/syntax/parser';
 import {contentBox, paddingBox} from './box-sizing';
 import {Path} from './path';
 import {BACKGROUND_CLIP} from '../css/property-descriptors/background-clip';
+import {isBezierCurve} from './bezier-curve';
 
 export const calculateBackgroundPositioningArea = (
     backgroundOrigin: BACKGROUND_ORIGIN,
@@ -37,7 +38,7 @@ export const calculateBackgroundPaintingArea = (backgroundClip: BACKGROUND_CLIP,
     return paddingBox(element);
 };
 
-export const calculateBackgroundRendering = (
+export const calculateTempBackgroundRendering = (
     container: ElementContainer,
     index: number,
     intrinsicSize: [number | null, number | null, number | null]
@@ -74,10 +75,66 @@ export const calculateBackgroundRendering = (
         backgroundPaintingArea
     );
 
+    const offsetX = Math.round(position[0]);
+    const offsetY = Math.round(position[1]);
+
+    path.forEach((point) => {
+        if (isBezierCurve(point)) {
+            point.startControl.x = point.startControl.x - backgroundPositioningArea.left;
+            point.startControl.y = point.startControl.y - backgroundPositioningArea.top;
+            point.endControl.x = point.endControl.x - backgroundPositioningArea.left;
+            point.endControl.y = point.endControl.y - backgroundPositioningArea.top;
+            point.end.x = point.end.x - backgroundPositioningArea.left;
+            point.end.y = point.end.y - backgroundPositioningArea.top;
+        } else {
+            point.x = point.x - backgroundPositioningArea.left;
+            point.y = point.y - backgroundPositioningArea.top;
+        }
+    });
+    return [path, offsetX, offsetY, sizeWidth, sizeHeight];
+};
+
+export const calculateBackgroundRendering = (
+    container: ElementContainer,
+    index: number,
+    intrinsicSize: [number | null, number | null, number | null]
+): [Path[], number, number, number, number, Bounds] => {
+    const backgroundPositioningArea = calculateBackgroundPositioningArea(
+        getBackgroundValueForIndex(container.styles.backgroundOrigin, index),
+        container
+    );
+
+    const backgroundPaintingArea = calculateBackgroundPaintingArea(
+        getBackgroundValueForIndex(container.styles.backgroundClip, index),
+        container
+    );
+
+    const backgroundImageSize = calculateBackgroundSize(
+        getBackgroundValueForIndex(container.styles.backgroundSize, index),
+        intrinsicSize,
+        backgroundPositioningArea
+    );
+
+    const [sizeWidth, sizeHeight] = backgroundImageSize;
+
+    const position = getAbsoluteValueForTuple(
+        getBackgroundValueForIndex(container.styles.backgroundPosition, index),
+        backgroundPositioningArea.width - sizeWidth,
+        backgroundPositioningArea.height - sizeHeight
+    );
+
+    const path = calculateBackgroundRepeatPath(
+        getBackgroundValueForIndex(container.styles.backgroundRepeat, index),
+        position,
+        backgroundImageSize,
+        backgroundPositioningArea,
+        backgroundPaintingArea
+    );
+
     const offsetX = Math.round(backgroundPositioningArea.left + position[0]);
     const offsetY = Math.round(backgroundPositioningArea.top + position[1]);
 
-    return [path, offsetX, offsetY, sizeWidth, sizeHeight];
+    return [path, offsetX, offsetY, sizeWidth, sizeHeight, backgroundPositioningArea];
 };
 
 export const isAuto = (token: CSSValue): boolean => isIdentToken(token) && token.value === BACKGROUND_SIZE.AUTO;
