@@ -1,26 +1,22 @@
 {
     "title": "html2canvas",
-    "name": "html2canvas",
+    "name": "@shilim-developer/html2canvas",
     "description": "Screenshots with JavaScript",
     "main": "dist/html2canvas.js",
     "module": "dist/html2canvas.esm.js",
     "typings": "dist/types/index.d.ts",
     "browser": "dist/html2canvas.js",
-    "version": "1.5.4",
-    "author": {
-        "name": "Niklas von Hertzen",
-        "email": "niklasvh@gmail.com",
-        "url": "https://hertzen.com"
-    },
+    "version": "1.0.0",
+    "author": "shilim-developer",
     "engines": {
         "node": ">=8.0.0"
     },
     "repository": {
         "type": "git",
-        "url": "git@github.com:niklasvh/html2canvas.git"
+        "url": "git@github.com:shilim-developer/html2canvas.git"
     },
     "bugs": {
-        "url": "https://github.com/niklasvh/html2canvas/issues"
+        "url": "https://github.com/shilim-developer/html2canvas/issues"
     },
     "devDependencies": {
         "@babel/cli": "^7.4.3",
